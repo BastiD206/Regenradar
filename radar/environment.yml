@@ -3,8 +3,8 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - wradlib
   - numpy
-  - scipy
   - pillow
   - requests
+  - h5py
+  - pyproj
