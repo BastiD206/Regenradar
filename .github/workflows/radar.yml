@@ -26,8 +26,11 @@ jobs:
       - name: Radarkarten erzeugen
         shell: micromamba-shell {0}
         run: |
-          python radar/radar.py --out site/radar
+          mkdir -p site/radar
           echo "Regenradar-Daten (DWD Open Data)" > site/index.html
+          python radar/radar.py --out site/radar > site/log.txt 2>&1 || echo "FEHLER: Skript endete mit Code $?" >> site/log.txt
+          echo "--- Dateien ---" >> site/log.txt
+          find site -type f | head -60 >> site/log.txt
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
