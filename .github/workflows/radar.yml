@@ -31,17 +31,61 @@ jobs:
           python radar/radar.py --out site/radar > site/log.txt 2>&1 || echo "FEHLER: Skript endete mit Code $?" >> site/log.txt
           echo "--- Dateien ---" >> site/log.txt
           find site -type f | head -60 >> site/log.txt
-      - name: DWD-Verzeichnisse erkunden (nur Diagnose)
+      - name: DWD-Radarprodukte genauer erkunden (nur Diagnose)
         continue-on-error: true
+        shell: micromamba-shell {0}
         run: |
-          {
-            echo "=== radar ==="; curl -s https://opendata.dwd.de/weather/radar/ | grep -o 'href="[^"]*"' | head -60
-            echo "=== composite ==="; curl -s https://opendata.dwd.de/weather/radar/composite/ | grep -o 'href="[^"]*"' | head -60
-            echo "=== sites ==="; curl -s https://opendata.dwd.de/weather/radar/sites/ | grep -o 'href="[^"]*"' | head -60
-            echo "=== sweep_vol_v ==="; curl -s https://opendata.dwd.de/weather/radar/sites/sweep_vol_v/ | grep -o 'href="[^"]*"' | head -40
-            echo "=== WMS-Ebenen ==="; curl -s "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetCapabilities" | grep -o '<Name>[^<]*</Name>' | grep -i -E 'radar|hagel|hail|doppler|blitz|lightning' | head -80
-            echo "=== nwp ==="; curl -s https://opendata.dwd.de/weather/nwp/ | grep -o 'href="[^"]*"' | head -40
-          } > site/discover.txt 2>&1
+          python - > site/discover2.txt 2>&1 <<'EOF'
+          import io, re, tarfile, requests, h5py
+          B = "https://opendata.dwd.de/weather/radar/"
+          H = {"User-Agent": "Wetterapp-Erkundung"}
+          def ls(u):
+              t = requests.get(u, headers=H, timeout=60).text
+              return [x for x in re.findall(r'href="([^"]+)"', t) if not x.startswith("..") and not x.startswith("?")]
+          def attrs(g):
+              return {k: (v.decode() if isinstance(v, bytes) else (v.tolist() if hasattr(v, "tolist") else v)) for k, v in list(g.attrs.items())[:14]}
+          def describe(data):
+              if data[:4] != b"\x89HDF":
+                  print("   (kein HDF5) Anfang:", data[:400]); return
+              with h5py.File(io.BytesIO(data), "r") as h:
+                  print("   HDF5 Wurzel:", attrs(h))
+                  for k in ("what", "where", "how"):
+                      if k in h: print("   /%s:" % k, attrs(h[k]))
+                  for dn in [k for k in h.keys() if k.startswith("dataset")][:3]:
+                      ds = h[dn]
+                      if "what" in ds: print("   %s/what:" % dn, attrs(ds["what"]))
+                      for gn in [k for k in ds.keys() if k.startswith("data")][:2]:
+                          g = ds[gn]
+                          if "what" in g: print("   %s/%s/what:" % (dn, gn), attrs(g["what"]))
+                          if "data" in g: print("   %s/%s/data: shape=%s dtype=%s" % (dn, gn, g["data"].shape, g["data"].dtype))
+          def latest(url, maxdepth=4):
+              for _ in range(maxdepth + 1):
+                  items = ls(url)
+                  if not items: return url, None
+                  print("   Inhalt von", url.replace(B, ""), ":", len(items), "Einträge; erste:", items[:4], "letzte:", items[-4:])
+                  if items[-1].endswith("/"): url += items[-1]
+                  else: return url, items[-1]
+              return url, None
+          for p in ["composite/hg", "composite/hx", "composite/pg", "composite/vii", "composite/hymecng", "composite/dmax", "composite/rs", "mesocyclones", "konrad3d", "sites/px250", "sites/sweep_vol_v/boo", "sites/sweep_pcp_v/boo", "sites/sweep_pcp_z/boo"]:
+              print("\n=== %s ===" % p)
+              try:
+                  url, f = latest(B + p + "/")
+                  if not f: print("   keine Datei gefunden"); continue
+                  size = int(requests.head(url + f, headers=H, timeout=60, allow_redirects=True).headers.get("Content-Length", 0))
+                  print("   neueste Datei:", url.replace(B, "") + f, "Größe", size)
+                  if size > 30000000: print("   zu groß, übersprungen"); continue
+                  raw = requests.get(url + f, headers=H, timeout=180).content
+                  data = raw
+                  try:
+                      tf = tarfile.open(fileobj=io.BytesIO(raw), mode="r:*"); mem = [m for m in tf.getmembers() if m.isfile()]
+                      print("   Tar mit", len(mem), "Dateien:", [m.name for m in mem[:3]], "...", [m.name for m in mem[-2:]])
+                      data = tf.extractfile(mem[0]).read()
+                  except tarfile.ReadError:
+                      pass
+                  describe(data)
+              except Exception as e:
+                  print("   FEHLER:", repr(e))
+          EOF
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
