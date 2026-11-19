@@ -31,6 +31,17 @@ jobs:
           python radar/radar.py --out site/radar > site/log.txt 2>&1 || echo "FEHLER: Skript endete mit Code $?" >> site/log.txt
           echo "--- Dateien ---" >> site/log.txt
           find site -type f | head -60 >> site/log.txt
+      - name: DWD-Verzeichnisse erkunden (nur Diagnose)
+        continue-on-error: true
+        run: |
+          {
+            echo "=== radar ==="; curl -s https://opendata.dwd.de/weather/radar/ | grep -o 'href="[^"]*"' | head -60
+            echo "=== composite ==="; curl -s https://opendata.dwd.de/weather/radar/composite/ | grep -o 'href="[^"]*"' | head -60
+            echo "=== sites ==="; curl -s https://opendata.dwd.de/weather/radar/sites/ | grep -o 'href="[^"]*"' | head -60
+            echo "=== sweep_vol_v ==="; curl -s https://opendata.dwd.de/weather/radar/sites/sweep_vol_v/ | grep -o 'href="[^"]*"' | head -40
+            echo "=== WMS-Ebenen ==="; curl -s "https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0&request=GetCapabilities" | grep -o '<Name>[^<]*</Name>' | grep -i -E 'radar|hagel|hail|doppler|blitz|lightning' | head -80
+            echo "=== nwp ==="; curl -s https://opendata.dwd.de/weather/nwp/ | grep -o 'href="[^"]*"' | head -40
+          } > site/discover.txt 2>&1
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
